@@ -49,7 +49,7 @@ public class SenseHat {
     private final ListenableOnOffRead.Impl right = new ListenableOnOffRead.Impl();
     private final ListenableOnOffRead.Impl center = new ListenableOnOffRead.Impl();
 
-    private int rotation = 0;
+    private GraphicsDisplay.Rotation rotation = GraphicsDisplay.Rotation.ROTATE_0;
     private boolean lowLight = false;
     private int[] gamma = DEFAULT_GAMMA.clone();
 
@@ -170,7 +170,7 @@ public class SenseHat {
 
     public GraphicsDisplay getDisplay() {
         if (display == null) {
-            display = new GraphicsDisplay(getDisplayDriver());
+            display = new GraphicsDisplay(getDisplayDriver(), rotation);
         }
 
         return display;
@@ -267,6 +267,11 @@ public class SenseHat {
         validateColor(backColor);
 
         int[][][] messageBuffer = buildTextBuffer(message, textColor, backColor);
+        
+        if(scrollSpeed <= 0) {
+            throw new IllegalArgumentException("Scroll speed must be greater than zero");
+
+        }
         int delayMillis = Math.max(1, (int) (scrollSpeed * 1000));
 
         for (int offset = 0; offset <= messageBuffer[0].length - WIDTH; offset++) {
@@ -277,16 +282,25 @@ public class SenseHat {
     }
 
     public void setRotation(int degrees) {
-        if (degrees != 0 && degrees != 90 && degrees != 180 && degrees != 270) {
-            throw new IllegalArgumentException("Rotation must be one of 0, 90, 180, 270");
-        }
+        this.rotation = switch (degrees) {
+            case 0 -> GraphicsDisplay.Rotation.ROTATE_0;
+            case 90 -> GraphicsDisplay.Rotation.ROTATE_90;
+            case 180 -> GraphicsDisplay.Rotation.ROTATE_180;
+            case 270 -> GraphicsDisplay.Rotation.ROTATE_270;
+            default -> throw new IllegalArgumentException("Rotation must be 0, 90, 180 or 270 degrees");
+        };
 
-        this.rotation = degrees;
+        this.display = new GraphicsDisplay(getDisplayDriver(), rotation);
         renderBuffer();
     }
 
     public int getRotation() {
-        return rotation;
+        return switch (rotation) {
+            case ROTATE_0 -> 0;
+            case ROTATE_90 -> 90;
+            case ROTATE_180 -> 180;
+            case ROTATE_270 -> 270;
+        };
     }
 
     public void flipH() {
@@ -389,7 +403,7 @@ public class SenseHat {
     }
 
     public double[] getAccelerometer() {
-        return getOrientationDegrees();
+        return getAccelerometerRaw();
     }
 
     public double[] getAccelerometerRaw() {
@@ -566,11 +580,9 @@ public class SenseHat {
     }
 
     private void renderPixel(int x, int y) {
-        int[] mapped = mapCoordinates(x, y);
-
         getDisplay().setPixel(
-                mapped[0],
-                mapped[1],
+                x,
+                y,
                 rgb(
                         applyBrightness(pixelBuffer[y][x][0]),
                         applyBrightness(pixelBuffer[y][x][1]),
@@ -690,15 +702,6 @@ public class SenseHat {
         pixelBuffer[y][x][0] = r;
         pixelBuffer[y][x][1] = g;
         pixelBuffer[y][x][2] = b;
-    }
-
-    private int[] mapCoordinates(int x, int y) {
-        return switch (rotation) {
-            case 90 -> new int[] { HEIGHT - 1 - y, x };
-            case 180 -> new int[] { WIDTH - 1 - x, HEIGHT - 1 - y };
-            case 270 -> new int[] { y, WIDTH - 1 - x };
-            default -> new int[] { x, y };
-        };
     }
 
     private void swapPixels(int x1, int y1, int x2, int y2) {
