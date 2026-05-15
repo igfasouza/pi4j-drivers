@@ -25,9 +25,14 @@ public class SenseHat {
 
     private static final int WIDTH = 8;
     private static final int HEIGHT = 8;
+    private static final int I2C_BUS = 1;
+    private static final int RGB_CHANNELS = 3;
+    private static final int MAX_COLOR_VALUE = 255;
+
+    private static final int[] WHITE = {255, 255, 255};
+    private static final int[] BLACK = {0, 0, 0};
 
     private static final int[] DEFAULT_GAMMA = createDefaultGamma();
-
     private static final BitmapFont MESSAGE_FONT = BitmapFont.get5x8Font(BitmapFont.Option.PROPORTIONAL);
     private static final BitmapFont LETTER_FONT = BitmapFont.get5x8Font();
 
@@ -37,6 +42,7 @@ public class SenseHat {
     private GraphicsDisplayDriver displayDriver;
     private GraphicsDisplay display;
     private LinuxInputDriver inputDriver;
+
     private Hts221Driver hts221Driver;
     private Lps25hDriver lps25hDriver;
     private Tcs3400Driver tcs3400Driver;
@@ -53,15 +59,31 @@ public class SenseHat {
     private boolean lowLight = false;
     private int[] gamma = DEFAULT_GAMMA.clone();
 
-    private final int[][][] pixelBuffer = new int[HEIGHT][WIDTH][3];
+    private final int[][][] pixelBuffer = new int[HEIGHT][WIDTH][RGB_CHANNELS];
     private final BlockingQueue<JoystickEvent> eventQueue = new LinkedBlockingQueue<>();
 
     public enum JoystickDirection {
-        UP, DOWN, LEFT, RIGHT, MIDDLE
+        UP,
+        DOWN,
+        LEFT,
+        RIGHT,
+        CENTER,
+
+        /**
+         * @deprecated Use {@link #CENTER} instead.
+         */
+        @Deprecated
+        MIDDLE
     }
 
     public enum JoystickAction {
-        PRESSED, RELEASED, HELD
+        PRESSED,
+        RELEASED,
+
+        /**
+         * Reserved for future support. LinuxInputDriver repeat events are currently ignored.
+         */
+        HELD
     }
 
     public record JoystickEvent(JoystickDirection direction, JoystickAction action, long timestamp) {
@@ -91,62 +113,41 @@ public class SenseHat {
                     .addDigitalInput(GameController.Key.CENTER, center)
                     .build();
         }
-
         return controller;
     }
 
     public Hts221Driver getHumiditySensor() {
         if (hts221Driver == null) {
-            I2C i2c = pi4j.create(I2C.newConfigBuilder(pi4j)
-                    .bus(1)
-                    .device(Hts221Driver.I2C_ADDRESS));
-            hts221Driver = new Hts221Driver(i2c);
+            hts221Driver = new Hts221Driver(createI2c(Hts221Driver.I2C_ADDRESS));
         }
-
         return hts221Driver;
     }
 
     public Lps25hDriver getPressureSensor() {
         if (lps25hDriver == null) {
-            I2C i2c = pi4j.create(I2C.newConfigBuilder(pi4j)
-                    .bus(1)
-                    .device(Lps25hDriver.I2C_ADDRESS));
-            lps25hDriver = new Lps25hDriver(i2c);
+            lps25hDriver = new Lps25hDriver(createI2c(Lps25hDriver.I2C_ADDRESS));
         }
-
         return lps25hDriver;
     }
 
     public Tcs3400Driver getLightSensor() {
         if (tcs3400Driver == null) {
-            I2C i2c = pi4j.create(I2C.newConfigBuilder(pi4j)
-                    .bus(1)
-                    .device(Tcs3400Driver.I2C_ADDRESS));
-            tcs3400Driver = new Tcs3400Driver(i2c);
+            tcs3400Driver = new Tcs3400Driver(createI2c(Tcs3400Driver.I2C_ADDRESS));
         }
-
         return tcs3400Driver;
     }
 
     public Lsm9ds1Driver getImuSensor() {
         if (lsm9ds1Driver == null) {
-            I2C i2c = pi4j.create(I2C.newConfigBuilder(pi4j)
-                    .bus(1)
-                    .device(Lsm9ds1Driver.I2C_ADDRESS_0));
-            lsm9ds1Driver = new Lsm9ds1Driver(i2c);
+            lsm9ds1Driver = new Lsm9ds1Driver(createI2c(Lsm9ds1Driver.I2C_ADDRESS_0));
         }
-
         return lsm9ds1Driver;
     }
 
     public Lsm9ds1MagnetometerDriver getMagnetometerSensor() {
         if (lsm9ds1MagnetometerDriver == null) {
-            I2C i2c = pi4j.create(I2C.newConfigBuilder(pi4j)
-                    .bus(1)
-                    .device(Lsm9ds1MagnetometerDriver.I2C_ADDRESS_0));
-            lsm9ds1MagnetometerDriver = new Lsm9ds1MagnetometerDriver(i2c);
+            lsm9ds1MagnetometerDriver = new Lsm9ds1MagnetometerDriver(createI2c(Lsm9ds1MagnetometerDriver.I2C_ADDRESS_0));
         }
-
         return lsm9ds1MagnetometerDriver;
     }
 
@@ -164,7 +165,6 @@ public class SenseHat {
         if (displayDriver == null) {
             displayDriver = FramebufferDriver.forSenseHat();
         }
-
         return displayDriver;
     }
 
@@ -172,14 +172,12 @@ public class SenseHat {
         if (display == null) {
             display = new GraphicsDisplay(getDisplayDriver(), rotation);
         }
-
         return display;
     }
 
     public void setPixel(int x, int y, int r, int g, int b) {
         validatePixelCoordinate(x, y);
         validateRgb(r, g, b);
-
         setPixelInBuffer(x, y, r, g, b);
         renderPixel(x, y);
         getDisplay().flush();
@@ -187,53 +185,33 @@ public class SenseHat {
 
     public int[] getPixel(int x, int y) {
         validatePixelCoordinate(x, y);
-
-        return new int[] {
-                pixelBuffer[y][x][0],
-                pixelBuffer[y][x][1],
-                pixelBuffer[y][x][2]
-        };
+        return copyColor(pixelBuffer[y][x]);
     }
 
     public void setPixels(int[][][] pixels) {
         validatePixelArray(pixels);
-
-        for (int y = 0; y < HEIGHT; y++) {
-            for (int x = 0; x < WIDTH; x++) {
-                setPixelInBuffer(x, y, pixels[y][x][0], pixels[y][x][1], pixels[y][x][2]);
-            }
-        }
-
+        copyToLogicalBuffer(pixels, 0);
         renderBuffer();
     }
 
     public int[][][] getPixels() {
-        int[][][] copy = new int[HEIGHT][WIDTH][3];
-
-        for (int y = 0; y < HEIGHT; y++) {
-            for (int x = 0; x < WIDTH; x++) {
-                copy[y][x][0] = pixelBuffer[y][x][0];
-                copy[y][x][1] = pixelBuffer[y][x][1];
-                copy[y][x][2] = pixelBuffer[y][x][2];
-            }
-        }
-
+        int[][][] copy = new int[HEIGHT][WIDTH][RGB_CHANNELS];
+        copyBuffer(pixelBuffer, copy, 0, WIDTH);
         return copy;
     }
 
     public void clear() {
-        clear(0, 0, 0);
+        clear(BLACK[0], BLACK[1], BLACK[2]);
     }
 
     public void clear(int r, int g, int b) {
         validateRgb(r, g, b);
-
         fillLogicalBuffer(r, g, b);
         renderBuffer();
     }
 
     public void showLetter(char letter) {
-        showLetter(letter, new int[] { 255, 255, 255 }, new int[] { 0, 0, 0 });
+        showLetter(letter, WHITE, BLACK);
     }
 
     public void showLetter(char letter, int[] textColor, int[] backColor) {
@@ -251,33 +229,34 @@ public class SenseHat {
     }
 
     public void showMessage(String message) {
-        showMessage(message, 0.1, new int[] { 255, 255, 255 }, new int[] { 0, 0, 0 });
+        showMessage(message, 0.1, WHITE, BLACK);
     }
 
     public void showMessage(String message, double scrollSpeed) {
-        showMessage(message, scrollSpeed, new int[] { 255, 255, 255 }, new int[] { 0, 0, 0 });
+        showMessage(message, scrollSpeed, WHITE, BLACK);
     }
 
     public void showMessage(String message, double scrollSpeed, int[] textColor, int[] backColor) {
         if (message == null) {
             throw new IllegalArgumentException("Message cannot be null");
         }
+        if (scrollSpeed <= 0) {
+            throw new IllegalArgumentException("Scroll speed must be greater than zero");
+        }
 
         validateColor(textColor);
         validateColor(backColor);
 
         int[][][] messageBuffer = buildTextBuffer(message, textColor, backColor);
-
-        if (scrollSpeed <= 0) {
-            throw new IllegalArgumentException("Scroll speed must be greater than zero");
-
-        }
         int delayMillis = Math.max(1, (int) (scrollSpeed * 1000));
 
         for (int offset = 0; offset <= messageBuffer[0].length - WIDTH; offset++) {
-            copyWindowToLogicalBuffer(messageBuffer, offset);
+            copyToLogicalBuffer(messageBuffer, offset);
             renderBuffer();
-            sleep(delayMillis);
+
+            if (!sleep(delayMillis)) {
+                return;
+            }
         }
     }
 
@@ -289,7 +268,6 @@ public class SenseHat {
             case 270 -> GraphicsDisplay.Rotation.ROTATE_270;
             default -> throw new IllegalArgumentException("Rotation must be 0, 90, 180 or 270 degrees");
         };
-
         this.display = new GraphicsDisplay(getDisplayDriver(), rotation);
         renderBuffer();
     }
@@ -309,7 +287,6 @@ public class SenseHat {
                 swapPixels(x, y, WIDTH - 1 - x, y);
             }
         }
-
         renderBuffer();
     }
 
@@ -319,7 +296,6 @@ public class SenseHat {
                 swapPixels(x, y, x, HEIGHT - 1 - y);
             }
         }
-
         renderBuffer();
     }
 
@@ -336,11 +312,9 @@ public class SenseHat {
         if (gamma == null || gamma.length != 256) {
             throw new IllegalArgumentException("Gamma must be an int[256] array");
         }
-
         for (int value : gamma) {
             validateColorValue(value);
         }
-
         this.gamma = gamma.clone();
         renderBuffer();
     }
@@ -380,7 +354,6 @@ public class SenseHat {
 
     public double[] getOrientationRadians() {
         double[] degrees = getOrientationDegrees();
-
         return new double[] {
                 Math.toRadians(degrees[0]),
                 Math.toRadians(degrees[1]),
@@ -389,8 +362,7 @@ public class SenseHat {
     }
 
     public double[] getOrientationDegrees() {
-        double[] accel = getAccelerometerRaw();
-
+        double[] accel = getAccelerometer();
         double x = accel[0];
         double y = accel[1];
         double z = accel[2];
@@ -399,74 +371,36 @@ public class SenseHat {
         double roll = Math.toDegrees(Math.atan2(y, Math.sqrt(x * x + z * z)));
         double yaw = getCompassHeading();
 
-        return new double[] { pitch, roll, yaw };
+        return new double[] {pitch, roll, yaw};
     }
 
     public double[] getAccelerometer() {
-        return getAccelerometerRaw();
-    }
-
-    public double[] getAccelerometerRaw() {
-        float[] values = getImuSensor().readAccelerometer();
-
-        return new double[] {
-                values[0],
-                values[1],
-                values[2]
-        };
+        return toDoubleArray(getImuSensor().readAccelerometer());
     }
 
     public double[] getGyroscope() {
-        return getGyroscopeRaw();
-    }
-
-    public double[] getGyroscopeRaw() {
-        float[] values = getImuSensor().readGyroscope();
-
-        return new double[] {
-                values[0],
-                values[1],
-                values[2]
-        };
+        return toDoubleArray(getImuSensor().readGyroscope());
     }
 
     public double[] getCompass() {
-        return getCompassRaw();
-    }
-
-    public double[] getCompassRaw() {
-        float[] values = getMagnetometerSensor().readMagneticField();
-
-        return new double[] {
-                values[0],
-                values[1],
-                values[2]
-        };
+        return toDoubleArray(getMagnetometerSensor().readMagneticField());
     }
 
     public double getCompassHeading() {
-        double[] mag = getCompassRaw();
+        double[] mag = getCompass();
         double heading = Math.toDegrees(Math.atan2(mag[1], mag[0]));
-
-        if (heading < 0) {
-            heading += 360.0;
-        }
-
-        return heading;
+        return heading < 0 ? heading + 360.0 : heading;
     }
 
     public List<JoystickEvent> getEvents() {
         getController();
-
         List<JoystickEvent> events = new ArrayList<>();
         eventQueue.drainTo(events);
-
         return events;
     }
 
     public JoystickEvent waitForEvent() {
         getController();
-
         try {
             return eventQueue.take();
         } catch (InterruptedException e) {
@@ -480,7 +414,7 @@ public class SenseHat {
         double clear = raw[0];
 
         if (clear <= 0) {
-            return new int[] { 0, 0, 0 };
+            return new int[] {0, 0, 0};
         }
 
         return new int[] {
@@ -492,7 +426,6 @@ public class SenseHat {
 
     public int[] getColorRaw() {
         float[] raw = getLightSensor().readCrgb();
-
         return new int[] {
                 Math.round(raw[1]),
                 Math.round(raw[2]),
@@ -521,27 +454,27 @@ public class SenseHat {
                 "Tcs3400Driver does not currently expose integration cycles. Add integration support to Tcs3400Driver first.");
     }
 
+    private I2C createI2c(int deviceAddress) {
+        return pi4j.create(I2C.newConfigBuilder(pi4j)
+                .bus(I2C_BUS)
+                .device(deviceAddress));
+    }
+
     private void handleEvent(LinuxInputDriver.Event event) {
         if (event.getType() != LinuxInputDriver.EV_KEY) {
             return;
         }
 
-        Boolean state = switch (event.getValue()) {
-            case LinuxInputDriver.STATE_PRESS -> true;
-            case LinuxInputDriver.STATE_RELEASE -> false;
-            default -> null;
-        };
-
-        if (state == null) {
+        JoystickAction action = mapJoystickAction(event.getValue());
+        if (action == null) {
             return;
         }
 
-        updateControllerState(event.getCode(), state);
+        boolean pressed = action == JoystickAction.PRESSED || action == JoystickAction.HELD;
+        updateControllerState(event.getCode(), pressed);
 
         JoystickDirection direction = mapJoystickDirection(event.getCode());
-
         if (direction != null) {
-            JoystickAction action = state ? JoystickAction.PRESSED : JoystickAction.RELEASED;
             eventQueue.offer(new JoystickEvent(direction, action, System.currentTimeMillis()));
         }
     }
@@ -564,18 +497,21 @@ public class SenseHat {
             case LinuxInputDriver.KEY_UP -> JoystickDirection.UP;
             case LinuxInputDriver.KEY_LEFT -> JoystickDirection.LEFT;
             case LinuxInputDriver.KEY_RIGHT -> JoystickDirection.RIGHT;
-            case LinuxInputDriver.KEY_ENTER -> JoystickDirection.MIDDLE;
+            case LinuxInputDriver.KEY_ENTER -> JoystickDirection.CENTER;
+            default -> null;
+        };
+    }
+
+    private JoystickAction mapJoystickAction(int value) {
+        return switch (value) {
+            case LinuxInputDriver.STATE_PRESS -> JoystickAction.PRESSED;
+            case LinuxInputDriver.STATE_RELEASE -> JoystickAction.RELEASED;
             default -> null;
         };
     }
 
     private void renderBuffer() {
-        for (int y = 0; y < HEIGHT; y++) {
-            for (int x = 0; x < WIDTH; x++) {
-                renderPixel(x, y);
-            }
-        }
-
+        forEachPixel(this::renderPixel);
         getDisplay().flush();
     }
 
@@ -591,28 +527,17 @@ public class SenseHat {
 
     private int[][][] buildTextBuffer(String message, int[] textColor, int[] backColor) {
         int width = WIDTH + measureTextWidth(message) + WIDTH;
-        int[][][] buffer = new int[HEIGHT][width][3];
+        int[][][] buffer = new int[HEIGHT][width][RGB_CHANNELS];
 
         fillBuffer(buffer, backColor);
 
         int cursorX = WIDTH;
-
         for (int offset = 0; offset < message.length();) {
             int codePoint = message.codePointAt(offset);
             offset += Character.charCount(codePoint);
 
             BitmapFont.Glyph glyph = getGlyphOrSpace(MESSAGE_FONT, codePoint);
-
-            for (int y = 0; y < Math.min(HEIGHT, MESSAGE_FONT.getCellHeight()); y++) {
-                for (int x = 0; x < glyph.getWidth(); x++) {
-                    if (glyph.getPixel(x, y)) {
-                        buffer[y][cursorX + x][0] = textColor[0];
-                        buffer[y][cursorX + x][1] = textColor[1];
-                        buffer[y][cursorX + x][2] = textColor[2];
-                    }
-                }
-            }
-
+            drawGlyph(buffer, glyph, MESSAGE_FONT, cursorX, 0, textColor);
             cursorX += glyph.getWidth();
         }
 
@@ -621,26 +546,21 @@ public class SenseHat {
 
     private int measureTextWidth(String message) {
         int width = 0;
-
         for (int offset = 0; offset < message.length();) {
             int codePoint = message.codePointAt(offset);
             offset += Character.charCount(codePoint);
-
             width += getGlyphOrSpace(MESSAGE_FONT, codePoint).getWidth();
         }
-
         return width;
     }
 
     private BitmapFont.Glyph getGlyphOrSpace(BitmapFont font, int codePoint) {
         BitmapFont.Glyph glyph = font.getGlyph(codePoint);
-
         if (glyph != null) {
             return glyph;
         }
 
         glyph = font.getGlyph(' ');
-
         if (glyph != null) {
             return glyph;
         }
@@ -648,52 +568,43 @@ public class SenseHat {
         throw new IllegalStateException("BitmapFont does not contain a space glyph");
     }
 
-    private void drawGlyphToLogicalBuffer(BitmapFont.Glyph glyph, BitmapFont font, int xOffset, int yOffset,
-            int[] color) {
+    private void drawGlyphToLogicalBuffer(BitmapFont.Glyph glyph, BitmapFont font, int xOffset, int yOffset, int[] color) {
+        drawGlyph(pixelBuffer, glyph, font, xOffset, yOffset, color);
+    }
+
+    private void drawGlyph(int[][][] target, BitmapFont.Glyph glyph, BitmapFont font, int xOffset, int yOffset, int[] color) {
         for (int y = 0; y < font.getCellHeight(); y++) {
             for (int x = 0; x < glyph.getWidth(); x++) {
                 int targetX = x + xOffset;
                 int targetY = y + yOffset;
 
-                if (targetX >= 0
-                        && targetX < WIDTH
-                        && targetY >= 0
-                        && targetY < HEIGHT
-                        && glyph.getPixel(x, y)) {
-
-                    setPixelInBuffer(targetX, targetY, color[0], color[1], color[2]);
+                if (isInside(target, targetX, targetY) && glyph.getPixel(x, y)) {
+                    copyColor(color, target[targetY][targetX]);
                 }
             }
         }
     }
 
-    private void copyWindowToLogicalBuffer(int[][][] source, int offset) {
+    private void copyToLogicalBuffer(int[][][] source, int sourceXOffset) {
+        copyBuffer(source, pixelBuffer, sourceXOffset, WIDTH);
+    }
+
+    private void copyBuffer(int[][][] source, int[][][] target, int sourceXOffset, int width) {
         for (int y = 0; y < HEIGHT; y++) {
-            for (int x = 0; x < WIDTH; x++) {
-                setPixelInBuffer(
-                        x,
-                        y,
-                        source[y][offset + x][0],
-                        source[y][offset + x][1],
-                        source[y][offset + x][2]);
+            for (int x = 0; x < width; x++) {
+                copyColor(source[y][sourceXOffset + x], target[y][x]);
             }
         }
     }
 
     private void fillLogicalBuffer(int r, int g, int b) {
-        for (int y = 0; y < HEIGHT; y++) {
-            for (int x = 0; x < WIDTH; x++) {
-                setPixelInBuffer(x, y, r, g, b);
-            }
-        }
+        forEachPixel((x, y) -> setPixelInBuffer(x, y, r, g, b));
     }
 
     private void fillBuffer(int[][][] buffer, int[] color) {
         for (int y = 0; y < buffer.length; y++) {
             for (int x = 0; x < buffer[y].length; x++) {
-                buffer[y][x][0] = color[0];
-                buffer[y][x][1] = color[1];
-                buffer[y][x][2] = color[2];
+                copyColor(color, buffer[y][x]);
             }
         }
     }
@@ -705,9 +616,15 @@ public class SenseHat {
     }
 
     private void swapPixels(int x1, int y1, int x2, int y2) {
-        int[] temp = pixelBuffer[y1][x1];
-        pixelBuffer[y1][x1] = pixelBuffer[y2][x2];
-        pixelBuffer[y2][x2] = temp;
+        int r = pixelBuffer[y1][x1][0];
+        int g = pixelBuffer[y1][x1][1];
+        int b = pixelBuffer[y1][x1][2];
+
+        copyColor(pixelBuffer[y2][x2], pixelBuffer[y1][x1]);
+
+        pixelBuffer[y2][x2][0] = r;
+        pixelBuffer[y2][x2][1] = g;
+        pixelBuffer[y2][x2][2] = b;
     }
 
     private int applyBrightness(int value) {
@@ -717,17 +634,33 @@ public class SenseHat {
 
     private static int[] createDefaultGamma() {
         int[] values = new int[256];
-
         for (int i = 0; i < values.length; i++) {
             values[i] = i;
         }
-
         return values;
     }
 
     private static int normalizeColor(double value, double clear) {
-        int normalized = (int) Math.round((value / clear) * 255.0);
-        return Math.max(0, Math.min(255, normalized));
+        int normalized = (int) Math.round((value / clear) * MAX_COLOR_VALUE);
+        return Math.max(0, Math.min(MAX_COLOR_VALUE, normalized));
+    }
+
+    private static double[] toDoubleArray(float[] values) {
+        return new double[] {values[0], values[1], values[2]};
+    }
+
+    private static int[] copyColor(int[] color) {
+        return new int[] {color[0], color[1], color[2]};
+    }
+
+    private static void copyColor(int[] source, int[] target) {
+        target[0] = source[0];
+        target[1] = source[1];
+        target[2] = source[2];
+    }
+
+    private static boolean isInside(int[][][] buffer, int x, int y) {
+        return y >= 0 && y < buffer.length && x >= 0 && x < buffer[y].length;
     }
 
     private static int rgb(int r, int g, int b) {
@@ -751,20 +684,18 @@ public class SenseHat {
             }
 
             for (int x = 0; x < WIDTH; x++) {
-                if (pixels[y][x] == null || pixels[y][x].length != 3) {
+                if (pixels[y][x] == null || pixels[y][x].length != RGB_CHANNELS) {
                     throw new IllegalArgumentException("Pixels must be an [8][8][3] array");
                 }
-
                 validateColor(pixels[y][x]);
             }
         }
     }
 
     private static void validateColor(int[] color) {
-        if (color == null || color.length != 3) {
+        if (color == null || color.length != RGB_CHANNELS) {
             throw new IllegalArgumentException("Color must be an int[3] RGB array");
         }
-
         validateRgb(color[0], color[1], color[2]);
     }
 
@@ -775,16 +706,31 @@ public class SenseHat {
     }
 
     private static void validateColorValue(int value) {
-        if (value < 0 || value > 255) {
+        if (value < 0 || value > MAX_COLOR_VALUE) {
             throw new IllegalArgumentException("Color values must be between 0 and 255");
         }
     }
 
-    private static void sleep(int millis) {
+    private static boolean sleep(int millis) {
         try {
             Thread.sleep(millis);
+            return true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    @FunctionalInterface
+    private interface PixelConsumer {
+        void accept(int x, int y);
+    }
+
+    private static void forEachPixel(PixelConsumer consumer) {
+        for (int y = 0; y < HEIGHT; y++) {
+            for (int x = 0; x < WIDTH; x++) {
+                consumer.accept(x, y);
+            }
         }
     }
 }
