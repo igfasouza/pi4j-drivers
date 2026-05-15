@@ -78,12 +78,7 @@ public class SenseHat {
 
     public enum JoystickAction {
         PRESSED,
-        RELEASED,
-
-        /**
-         * Reserved for future support. LinuxInputDriver repeat events are currently ignored.
-         */
-        HELD
+        RELEASED
     }
 
     public record JoystickEvent(JoystickDirection direction, JoystickAction action, long timestamp) {
@@ -465,30 +460,30 @@ public class SenseHat {
             return;
         }
 
+        JoystickDirection direction = mapJoystickDirection(event.getCode());
+        if (direction == null) {
+            return;
+        }
+
         JoystickAction action = mapJoystickAction(event.getValue());
         if (action == null) {
             return;
         }
 
-        boolean pressed = action == JoystickAction.PRESSED || action == JoystickAction.HELD;
-        updateControllerState(event.getCode(), pressed);
+        boolean pressed = action == JoystickAction.PRESSED;
+        getInputForDirection(direction).setState(pressed);
 
-        JoystickDirection direction = mapJoystickDirection(event.getCode());
-        if (direction != null) {
-            eventQueue.offer(new JoystickEvent(direction, action, System.currentTimeMillis()));
-        }
+        eventQueue.offer(new JoystickEvent(direction, action, System.currentTimeMillis()));
     }
 
-    private void updateControllerState(int code, boolean state) {
-        switch (code) {
-            case LinuxInputDriver.KEY_DOWN -> down.setState(state);
-            case LinuxInputDriver.KEY_UP -> up.setState(state);
-            case LinuxInputDriver.KEY_LEFT -> left.setState(state);
-            case LinuxInputDriver.KEY_RIGHT -> right.setState(state);
-            case LinuxInputDriver.KEY_ENTER -> center.setState(state);
-            default -> {
-            }
-        }
+    private ListenableOnOffRead.Impl getInputForDirection(JoystickDirection direction) {
+        return switch (direction) {
+            case UP -> up;
+            case DOWN -> down;
+            case LEFT -> left;
+            case RIGHT -> right;
+            case CENTER, MIDDLE -> center;
+        };
     }
 
     private JoystickDirection mapJoystickDirection(int code) {
