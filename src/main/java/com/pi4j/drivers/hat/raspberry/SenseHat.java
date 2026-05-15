@@ -267,8 +267,8 @@ public class SenseHat {
         validateColor(backColor);
 
         int[][][] messageBuffer = buildTextBuffer(message, textColor, backColor);
-        
-        if(scrollSpeed <= 0) {
+
+        if (scrollSpeed <= 0) {
             throw new IllegalArgumentException("Scroll speed must be greater than zero");
 
         }
