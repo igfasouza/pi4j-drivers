@@ -379,4 +379,21 @@ public class GraphicsDisplay {
             }
         }
     }
+
+    public int[] copyDisplayBuffer() {
+        synchronized (lock) {
+            return Arrays.copyOf(displayBuffer, displayBuffer.length);
+        }
+    }
+
+    public void setDisplayBuffer(int[] newBuffer) {
+        if (newBuffer.length != displayBuffer.length) {
+            throw new IllegalArgumentException("Buffer size does not match display size");
+        }
+        synchronized (lock) {
+            System.arraycopy(newBuffer, 0, displayBuffer, 0, displayBuffer.length);
+            markModified(0, 0, displayWidth, displayHeight);
+        }
+    }
+
 }
