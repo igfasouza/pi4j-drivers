@@ -31,6 +31,13 @@ import java.util.function.Consumer;
 public class SenseHat implements AutoCloseable {
 
     // -------------------------------------------------------------------------
+    // Board version
+    // -------------------------------------------------------------------------
+
+    // V1 (2015) has no colour sensor; V2 (2020+) adds a TCS3400 at 0x39 or 0x29.
+    public enum Version { V1, V2 }
+
+    // -------------------------------------------------------------------------
     // Joystick event
     // -------------------------------------------------------------------------
 
@@ -47,6 +54,7 @@ public class SenseHat implements AutoCloseable {
 
     private final Context pi4j;
     private Rotation rotation;
+    private Version version;
 
     // Display
     private GraphicsDisplayDriver displayDriver;
@@ -300,11 +308,41 @@ public class SenseHat implements AutoCloseable {
     // -------------------------------------------------------------------------
 
     public Tcs3400Driver getLightSensor() {
+        if (getVersion() == Version.V1) {
+            throw new UnsupportedOperationException(
+                    "Colour sensor is not available on Sense HAT v1 (only v2 has the TCS3400)");
+        }
         if (tcs3400Driver == null) {
             I2C i2c = pi4j.create(I2C.newConfigBuilder(pi4j).bus(1).device(Tcs3400Driver.I2C_ADDRESS));
             tcs3400Driver = new Tcs3400Driver(i2c);
         }
         return tcs3400Driver;
+    }
+
+    // -------------------------------------------------------------------------
+    // Board version detection
+    // -------------------------------------------------------------------------
+
+    public Version getVersion() {
+        if (version == null) {
+            version = detectVersion();
+        }
+        return version;
+    }
+
+    // Probes the I2C bus for the TCS3400 colour sensor: present → v2, absent → v1.
+    // Reads the ID register (0x92); a valid TCS3400 family ID (0x90 or 0x93) means v2.
+    private Version detectVersion() {
+        for (int address : new int[] { Tcs3400Driver.I2C_ADDRESS, Tcs3400Driver.I2C_ADDRESS_TCS34007 }) {
+            try (I2C i2c = pi4j.create(I2C.newConfigBuilder(pi4j).bus(1).device(address))) {
+                int id = i2c.readRegister(0x92);
+                if (id == 0x90 || id == 0x93) {
+                    return Version.V2;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return Version.V1;
     }
 
     // returns [clear, red, green, blue] as raw 16-bit counts
@@ -381,7 +419,9 @@ public class SenseHat implements AutoCloseable {
         List<Sensor> result = new ArrayList<>();
         result.add(getHumiditySensor());
         result.add(getPressureSensor());
-        result.add(getLightSensor());
+        if (getVersion() == Version.V2) {
+            result.add(getLightSensor());
+        }
         result.add(getAccelerometer());
         result.add(getMagnetometer());
         return result;
