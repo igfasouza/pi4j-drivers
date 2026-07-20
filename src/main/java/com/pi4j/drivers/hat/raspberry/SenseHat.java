@@ -5,6 +5,7 @@ import com.pi4j.drivers.display.graphics.GraphicsDisplay;
 import com.pi4j.drivers.display.graphics.GraphicsDisplay.Rotation;
 import com.pi4j.drivers.display.graphics.GraphicsDisplayDriver;
 import com.pi4j.drivers.display.graphics.GraphicsTextAnimator;
+import com.pi4j.drivers.display.graphics.GraphicsTextAnimator.ScrollDirection;
 import com.pi4j.drivers.display.graphics.framebuffer.FramebufferDriver;
 import com.pi4j.drivers.display.BitmapFont;
 import com.pi4j.drivers.display.graphics.Argb32;
@@ -238,10 +239,16 @@ public class SenseHat implements AutoCloseable {
     }
 
     public void showMessage(String text, long scrollSpeedMillis, int textColor, int backColor) {
+        showMessage(text, scrollSpeedMillis, textColor, backColor, ScrollDirection.RIGHT_TO_LEFT);
+    }
+
+    public void showMessage(String text, long scrollSpeedMillis, int textColor, int backColor,
+                            ScrollDirection direction) {
         GraphicsTextAnimator animator = new GraphicsTextAnimator(getDisplay(), text);
         animator.setDelayMillis(scrollSpeedMillis);
         animator.setForeground(textColor);
         animator.setBackground(backColor);
+        animator.setScrollDirection(direction);
         animator.setClearOnStop(true);
         animator.scrollText();
     }
