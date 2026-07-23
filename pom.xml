@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.pi4j</groupId>
-    <artifactId>pi4j-drivers</artifactId>
+    <artifactId>pi4j-drivers-igfasouza</artifactId>
     <name>Pi4J :: DRIVERS</name>
     <description>Pi4J drivers for various electronic components</description>
     <url>https://www.pi4j.com/drivers/</url>
